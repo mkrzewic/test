@@ -20,6 +20,7 @@ enum class byte : unsigned char {};
 class FairMQMessage {
   size_t bytes{ 0 };
   byte* data{ nullptr };
+  size_t usedBytes{ 0 };
 
 public:
   FairMQMessage(size_t size) : bytes{ size }, data{ new byte[size] }
@@ -36,6 +37,7 @@ public:
 
   size_t GetSize() const { return bytes; }
   void* GetData() const { return data; }
+  bool SetUsedSize(const size_t size) {if (size<=bytes) { usedBytes = size; return true;} else return false;}
 };
 
 using FairMQMessagePtr = std::unique_ptr<FairMQMessage>;
@@ -246,8 +248,6 @@ typename std::enable_if<std::is_base_of<boost::container::pmr::polymorphic_alloc
                         FairMQMessagePtr>::type
   getMessage(ContainerT& container)
 {
-  //TODO in principle this should clear the container (call clear()) and set the actual length
-  //of data in the message!
   using namespace boost::container::pmr;
   auto alloc = container.get_allocator();
   printf("getMessage:");
@@ -258,7 +258,10 @@ typename std::enable_if<std::is_base_of<boost::container::pmr::polymorphic_alloc
   if (!resource) {
     return nullptr;
   }
-  return std::move(resource->getMessage(static_cast<void*>(container.data())));
+  auto message = resource->getMessage(static_cast<void*>(container.data()));
+  message->SetUsedSize(container.size() * sizeof(typename ContainerT::value_type));
+  container.clear();
+  return std::move(message);
 };
 
 //__________________________________________________________________________________________________
