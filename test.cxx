@@ -246,6 +246,8 @@ typename std::enable_if<std::is_base_of<boost::container::pmr::polymorphic_alloc
                         FairMQMessagePtr>::type
   getMessage(ContainerT& container)
 {
+  //TODO in principle this should clear the container (call clear()) and set the actual length
+  //of data in the message!
   using namespace boost::container::pmr;
   auto alloc = container.get_allocator();
   printf("getMessage:");
