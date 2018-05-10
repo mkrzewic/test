@@ -37,7 +37,15 @@ public:
 
   size_t GetSize() const { return bytes; }
   void* GetData() const { return data; }
-  bool SetUsedSize(const size_t size) {if (size<=bytes) { usedBytes = size; return true;} else return false;}
+  bool SetUsedSize(const size_t size)
+  {
+    if (size <= bytes) {
+      usedBytes = size;
+      return true;
+    }
+    else
+      return false;
+  }
 };
 
 using FairMQMessagePtr = std::unique_ptr<FairMQMessage>;
@@ -63,27 +71,133 @@ struct uninitializedValue {
 
 struct elem {
   int content;
-  elem() noexcept : content{ 0 } { printf("default ctor elem: %i\n", content); }
-  elem(int i) noexcept : content{ i } { printf("ctor elem %i\n", i); }
-  ~elem() { printf("dtor elem %i\n", content); }
-  elem(const elem& in) noexcept : content{ in.content } { printf("copy ctor elem %i\n", content); }
-  elem(const elem&& in) noexcept : content{ in.content } { printf("move ctor elem %i\n", content); }
+  // int more;
+  elem() noexcept : content{ 0 } { printf("default ctor elem: %i @%p\n", content, this); }
+  elem(int i) noexcept : content{ i } { printf("ctor elem %i @%p\n", i, this); }
+  ~elem() { printf("dtor elem %i @%p\n", content, this); }
+  elem(const elem& in) noexcept : content{ in.content } { printf("copy ctor elem %i %p -> %p\n", content, &in, this); }
+  elem(const elem&& in) noexcept : content{ in.content } { printf("move ctor elem %i %p -> %p\n", content, &in, this); }
   elem& operator=(elem& in) noexcept
   {
     content = in.content;
-    printf("copy assign elem %i\n", content);
+    printf("copy assign elem %i %p = %p\n", content, this, &in);
     return *this;
   }
   elem& operator=(elem&& in) noexcept
   {
     content = in.content;
-    printf("move assign elem %i\n", content);
+    printf("move assign elem %i %p = %p\n", content, this, &in);
     return *this;
   }
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+struct BaseHeader {
+  bool flagsNextHeader{false};
+  uint32_t headerSize{sizeof(BaseHeader)};
+
+  uint32_t size() const noexcept {return headerSize;}
+  const byte* data() const noexcept { return reinterpret_cast<const byte*>(this); }
+  const BaseHeader* next() const noexcept
+  {
+    return (flagsNextHeader) ? reinterpret_cast<const BaseHeader*>(reinterpret_cast<const byte*>(this) + headerSize)
+                             : nullptr;
+  }
+  BaseHeader() noexcept : flagsNextHeader{ 0 } { printf("default ctor BaseHeader: %i @%p\n", flagsNextHeader, this); }
+  ~BaseHeader() { printf("dtor BaseHeader %i @%p\n", flagsNextHeader, this); }
+  BaseHeader(const BaseHeader& in) noexcept : flagsNextHeader{ in.flagsNextHeader }
+  {
+    printf("copy ctor BaseHeader %i %p -> %p\n", flagsNextHeader, &in, this);
+  }
+  BaseHeader(const BaseHeader&& in) noexcept : flagsNextHeader{ in.flagsNextHeader }
+  {
+    printf("move ctor BaseHeader %i %p -> %p\n", flagsNextHeader, &in, this);
+  }
+  BaseHeader& operator=(BaseHeader& in) noexcept
+  {
+    flagsNextHeader = in.flagsNextHeader;
+    printf("copy assign BaseHeader %i %p = %p\n", flagsNextHeader, this, &in);
+    return *this;
+  }
+  BaseHeader& operator=(BaseHeader&& in) noexcept
+  {
+    flagsNextHeader = in.flagsNextHeader;
+    printf("move assign BaseHeader %i %p = %p\n", flagsNextHeader, this, &in);
+    return *this;
+  }
+};
+
+template <typename ContentT>
+struct InitWrapper {
+};
+
+struct Stack {
+
+  // This is ugly and needs fixing BUT:
+  // we need a static deleter for fairmq.
+  // TODO: maybe use allocator_traits if custom allocation is desired
+  //       the deallocate function is then static.
+  //       In the case of special transports is is cheap to copy the header stack into a message, so no problem there.
+  //       The copy can be avoided if we construct in place inside a FairMQMessage directly (instead of
+  //       allocating a unique_ptr we would hold a FairMQMessage which for the large part has similar semantics).
+  //
+  using Buffer = std::unique_ptr<byte[]>;
+  static std::default_delete<byte[]> sDeleter;
+  static void freefn(void* /*data*/, void* hint) { Stack::sDeleter(static_cast<byte*>(hint)); }
+
+  size_t bufferSize;
+  Buffer buffer;
+
+  byte* data() const { return buffer.get(); }
+  size_t size() const { return bufferSize; }
+
+  /// The magic constructor: takes arbitrary number of arguments and serialized them
+  /// into the buffer.
+  /// Intended use: produce a temporary via an initializer list.
+  /// TODO: maybe add a static_assert requiring first arg to be DataHeader
+  /// or maybe even require all these to be derived form BaseHeader
+  template <typename... Headers>
+  Stack(const Headers&... headers) : bufferSize{ size(headers...) }, buffer{ std::make_unique<byte[]>(bufferSize) }
+  {
+    printf("Stack ctor\n");
+    inject(buffer.get(), headers...);
+  }
+  Stack() = default;
+  Stack(Stack&&) = default;
+  Stack(Stack&) = delete;
+  Stack& operator=(Stack&) = delete;
+  Stack& operator=(Stack&&) = default;
+
+  template <typename T, typename... Args>
+  static size_t size(const T& h, const Args... args) noexcept
+  {
+    return size(h) + size(args...);
+  }
+
+private:
+  template <typename T>
+  static size_t size(const T& h) noexcept
+  {
+    return h.size();
+  }
+
+  template <typename T>
+  static byte* inject(byte* here, const T& h) noexcept
+  {
+    printf("  Stack: injecting from %p-> %p\n",&h, here);
+    std::copy(h.data(), h.data() + h.size(), here);
+    return here + h.size();
+  }
+
+  template <typename T, typename... Args>
+  static byte* inject(byte* here, const T& h, const Args... args) noexcept
+  {
+    auto alsohere = inject(here, h);
+    (reinterpret_cast<BaseHeader*>(here))->flagsNextHeader = true;
+    return inject(alsohere, args...);
+  }
+};
 
 //__________________________________________________________________________________________________
 // This in general is a bad idea, but here it is safe to inherit from an allocator since we
@@ -124,7 +238,7 @@ protected:
   const FairMQMessage* message;
 
 public:
-  SpectatorMessageResource(const FairMQMessage* _message) : message(_message){};
+  SpectatorMessageResource(const FairMQMessage* _message) : message(_message){printf("ctor SpectatorMessageResource %p, message data %p\n",this,message->GetData());};
   ~SpectatorMessageResource() { printf("dtor SpectatorMessageResource %p\n", this); }
   FairMQMessagePtr getMessage(void* p) override { return nullptr; }
 
@@ -198,7 +312,8 @@ protected:
 
   virtual void do_deallocate(void* p, std::size_t bytes, std::size_t alignment)
   {
-    printf("ChannelResource do_deallocate(%p,%li,%li), %p\n", p, bytes, alignment, messageMap[p].get());
+    printf("ChannelResource do_deallocate ptr: %p, bytes: %li, align: %li, message %p\n", p, bytes, alignment,
+           messageMap[p].get());
     if (!messageMap.erase(p)) {
       throw std::runtime_error("bad dealloc in ChannelResource");
     }
@@ -226,17 +341,55 @@ template <typename ElemT>
 auto adoptVector(size_t nelem, SpectatorMessageResource& resource)
 {
   return std::vector<ElemT, FastSpectatorAllocator>(nelem, FastSpectatorAllocator{ &resource });
-}
+};
+
+//__________________________________________________________________________________________________
+template <typename ElemT>
+struct Adopt {
+  template <typename FirstT, typename ExtraT>
+  struct doubleDeleter {
+    // kids: don't do this at home!
+    std::unique_ptr<ExtraT> extra;
+    void operator()(const FirstT* ptr) { delete ptr; }
+  };
+
+  using DataType = std::vector<ElemT, FastSpectatorAllocator>;
+  using DeleterType = doubleDeleter<DataType, SpectatorMessageResource>;
+  using OutputType = std::unique_ptr<const DataType, DeleterType>;
+
+  //__________________________________________________________________________________________________
+  // This returns a unique_ptr of const vector, does not allow modifications at the cost of pointer
+  // semantics for access.
+  static auto Vector(size_t nelem, FairMQMessage* message)
+  {
+    auto resource = std::make_unique<SpectatorMessageResource>(message);
+    auto output = new DataType(nelem, FastSpectatorAllocator{resource.get()});
+    return OutputType(
+      output,
+      DeleterType{ std::move(resource) });
+  }
+};
 
 //__________________________________________________________________________________________________
 // This returns a unique_ptr of const vector, does not allow modifications at the cost of pointer
 // semantics for access.
 template <typename ElemT>
-std::unique_ptr<const std::vector<ElemT, FastSpectatorAllocator>> adoptVector(size_t nelem, FairMQMessage* message)
+auto adoptVector(size_t nelem, FairMQMessage* message)
 {
-  // auto resource = std::make_unique<SpectatorMessageResource>(message);
-  auto resource = SpectatorMessageResource(message);
-  return std::make_unique<std::vector<ElemT, FastSpectatorAllocator>>(nelem, FastSpectatorAllocator(&resource));
+  using DataType = std::vector<ElemT, FastSpectatorAllocator>;
+
+  struct doubleDeleter {
+    // kids: don't do this at home!
+    std::unique_ptr<SpectatorMessageResource> extra;
+    void operator()(const DataType* ptr) { delete ptr; }
+  };
+
+  using OutputType = std::unique_ptr<const DataType, doubleDeleter>;
+
+  auto resource = std::make_unique<SpectatorMessageResource>(message);
+  auto output = new DataType(nelem, FastSpectatorAllocator{resource.get()});
+  printf("adoptVector int vec size: %li data:@%p:, first elem @%p, %i %i %i\n", output->size(), output->data(), &((*output)[0]), (*output)[0].content, (*output)[1].content, (*output)[2].content );
+  return OutputType(output,doubleDeleter{std::move(resource)});
 }
 
 //__________________________________________________________________________________________________
@@ -285,9 +438,9 @@ int main()
   ChannelResource channelResource(&factory);
   using o2vector = std::vector<elem, FastSpectatorAllocator>;
 
-  printf("\nmake vector\n");
-  o2vector vector(FastSpectatorAllocator{ &channelResource });
-  vector.reserve(3);
+  printf("\nmake vector with FastSpectatorAllocator\n");
+  o2vector vector(3, FastSpectatorAllocator{ &channelResource });
+  // vector.reserve(3);
   vector.emplace_back(1);
   vector.emplace_back(2);
   vector.emplace_back(3);
@@ -295,6 +448,21 @@ int main()
   printf("vector: %i %i %i %i\n", vector[0].content, vector[1].content, vector[2].content, vector[3].content);
   auto mes = getMessage(vector);
   print(mes);
+  printf("vector size: %li\n", vector.size());
+
+  printf("\nmake vector with pmr\n");
+  std::vector<elem, boost::container::pmr::polymorphic_allocator<byte>> vectorPol(
+    3, boost::container::pmr::polymorphic_allocator<byte>{ &channelResource });
+  // vectorPol.reserve(3);
+  vectorPol.emplace_back(1);
+  vectorPol.emplace_back(2);
+  vectorPol.emplace_back(3);
+  vectorPol.emplace_back(4);
+  printf("vectorPol: %i %i %i %i\n", vectorPol[0].content, vectorPol[1].content, vectorPol[2].content,
+         vectorPol[3].content);
+  auto mesPol = getMessage(vectorPol);
+  print(mesPol);
+  printf("vectorPol size: %li\n", vectorPol.size());
 
   printf("\nswap test:\n");
   o2vector v(3, FastSpectatorAllocator{ &channelResource });
@@ -303,14 +471,17 @@ int main()
   printf("vector: %i %i %i\n", vector[0].content, vector[1].content, vector[2].content);
 
   printf("\nadopt\n");
-  auto message = std::make_unique<FairMQMessage>(sizeof(int[3]));
+  auto message = std::make_unique<FairMQMessage>(3 * sizeof(elem));
   SpectatorMessageResource messageResource(message.get());
   printf("address of resource3: %p\n", &messageResource);
-  int tmpBuf[3] = { 3, 2, 1 };
-  std::memcpy(message->GetData(), tmpBuf, sizeof(int[3]));
+  elem tmpBuf[3] = { 3, 2, 1 };
+  std::memcpy(message->GetData(), tmpBuf, 3 * sizeof(elem));
 
   o2vector vv = o2vector(3, FastSpectatorAllocator{ &messageResource });
   printf("vv: %i %i %i\n", vv[0].content, vv[1].content, vv[2].content);
+
+  o2vector* newvv = new o2vector(3, FastSpectatorAllocator{ &messageResource });
+  printf("newvv: %i %i %i\n", (*newvv)[0].content, (*newvv)[1].content, (*newvv)[2].content);
 
   printf("\nget message from vv\n");
   boost::container::pmr::polymorphic_allocator<byte> alv = vv.get_allocator();
@@ -323,10 +494,48 @@ int main()
   printf("\ncopy vvv\n");
   o2vector cvvv = copyVector(vvv);
   printf("cvvv: %i %i %i\n", cvvv[0].content, cvvv[1].content, cvvv[2].content);
+  printf("vvv: %i %i %i\n", vvv[0].content, vvv[1].content, vvv[2].content);
 
-  printf("\nadopt vector via message with dropping the resource\n");
-  auto vvvv = adoptVector<elem>(3, message.get());
-  printf("vvvv: %i %i %i\n", (*vvvv)[0].content, (*vvvv)[1].content, (*vvvv)[2].content);
+  Adopt<elem>::OutputType outvec;
+  {
+    printf("\nadopt vector with temp resource\n");
+    printf("1---\n");
+    auto vvvv = Adopt<elem>::Vector(3, message.get());
+    printf("vvvv@%p, %i %i %i\n", vvvv.get(), (*vvvv)[0].content, (*vvvv)[1].content, (*vvvv)[2].content);
+    printf("2---\n");
+    outvec=std::move(vvvv);
+    auto vvvvv = Adopt<elem>::Vector(3, message.get());
+    printf("3---\n");
+    vvvvv.release();
+    printf("4---\n");
+  }
+  printf("5---\n");
+  printf("outvec@%p, %i %i %i\n", outvec.get(), (*outvec)[0].content, (*outvec)[1].content, (*outvec)[2].content);
+  printf("outvec size: %li\n", outvec->size());
+
+  decltype(adoptVector<elem>(3,message.get())) outvec2;
+  {
+    printf("\nadopt vector with temp resource 2\n");
+    printf("1---\n");
+    auto vvvv = adoptVector<elem>(3, message.get());
+    printf("vvvv@%p, %i %i %i\n", vvvv.get(), (*vvvv)[0].content, (*vvvv)[1].content, (*vvvv)[2].content);
+    printf("2---\n");
+    outvec2=std::move(vvvv);
+    auto vvvvv = adoptVector<elem>(3, message.get());
+    printf("3---\n");
+    vvvvv.release();
+    printf("4---\n");
+  }
+  printf("5---\n");
+  printf("outvec2@%p, %i %i %i\n", outvec2.get(), (*outvec2)[0].content, (*outvec2)[1].content, (*outvec2)[2].content);
+  printf("outvec2 size: %li\n", outvec2->size());
+
+  printf("cvvv: %i %i %i\n", cvvv[0].content, cvvv[1].content, cvvv[2].content);
+  printf("vvv: %i %i %i\n", vvv[0].content, vvv[1].content, vvv[2].content);
+
+  printf("\nstack ctor\n");
+  auto ui = std::make_unique<int>(3);
+  Stack stack{ BaseHeader{}, BaseHeader{} };
 
   printf("\nreturn\n");
   return 0;
