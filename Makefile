@@ -4,7 +4,7 @@ ROOTLIBS = -L$(ROOTSYS)/lib -L/home/mkrzewic/o2/sw/slc7_x86-64/boost/latest/lib 
 ROOTINC = -I$(ROOTSYS)/include -I/home/mkrzewic/o2/sw/slc7_x86-64/boost/latest/include/ -I/usr/local/include/benchmark -I/usr/local/include
 CXXFLAGS+=$(ROOTINC)
 
-INCLUDES:=test.h
+INCLUDES:=fake.h test.h
 
 OBJECTS:=test.o
 
@@ -12,7 +12,7 @@ SRCS:=test.cxx
 
 all: test
 
-test: $(SRCS) $(OBJECTS)
+test: $(SRCS) $(OBJECTS) $(INCLUDES)
 	$(CXX) -o  $@  $(OBJECTS) $(CXXFLAGS) $(ROOTLIBS)
 
 %.o: %.cxx 
