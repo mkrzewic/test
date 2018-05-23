@@ -8,12 +8,11 @@
 #include <new>
 #include <type_traits>
 #include <utility>
-#include <utility>
 #include <vector>
 
 //__________________________________________________________________________________________________
-// This in general is a bad idea, but here it is safe to inherit from an allocator since we
-// have no data and only override some methods so we don't get into slicing and other problems.
+// This in general (as in STL) is a bad idea, but here it is safe to inherit from an allocator since we
+// have no additional data and only override some methods so we don't get into slicing and other problems.
 template <typename T>
 class SpectatorAllocator : public boost::container::pmr::polymorphic_allocator<T> {
 public:
@@ -142,7 +141,7 @@ protected:
       return false;
     }
     printf("ChannelResource do_is_equal: factories: %p %p\n", that->factory, factory);
-    if (that->factory == factory) {
+    if (factory && that->factory == factory) {
       return true;
     }
     return false;
@@ -159,31 +158,6 @@ auto adoptVector(size_t nelem, SpectatorMessageResource& resource)
 };
 
 //__________________________________________________________________________________________________
-template <typename ElemT>
-struct Adopt {
-  template <typename FirstT, typename ExtraT>
-  struct doubleDeleter {
-    // kids: don't do this at home!
-    std::unique_ptr<ExtraT> extra;
-    void operator()(const FirstT* ptr) { delete ptr; }
-  };
-
-  using DataType = std::vector<ElemT, FastSpectatorAllocator>;
-  using DeleterType = doubleDeleter<DataType, SpectatorMessageResource>;
-  using OutputType = std::unique_ptr<const DataType, DeleterType>;
-
-  //__________________________________________________________________________________________________
-  // This returns a unique_ptr of const vector, does not allow modifications at the cost of pointer
-  // semantics for access.
-  static auto Vector(size_t nelem, FairMQMessage* message)
-  {
-    auto resource = std::make_unique<SpectatorMessageResource>(message);
-    auto output = new DataType(nelem, FastSpectatorAllocator{ resource.get() });
-    return OutputType(output, DeleterType{ std::move(resource) });
-  }
-};
-
-//__________________________________________________________________________________________________
 // This returns a unique_ptr of const vector, does not allow modifications at the cost of pointer
 // semantics for access.
 template <typename ElemT>
@@ -195,6 +169,13 @@ auto adoptVector(size_t nelem, FairMQMessage* message)
     // kids: don't do this at home!
     std::unique_ptr<SpectatorMessageResource> extra;
     void operator()(const DataType* ptr) { delete ptr; }
+    doubleDeleter(std::unique_ptr<SpectatorMessageResource> in) : extra{std::move(in)} {printf("ctor doubleDeleter(resource) %p\n",this);}
+    doubleDeleter() : extra{nullptr} {printf("ctor doubleDeleter %p\n",this);}
+    doubleDeleter(doubleDeleter&& in) : extra{std::move(in.extra)} {printf("move ctor doubleDeleter %p->%p\n",&in,this);}
+    doubleDeleter(const doubleDeleter& in) = delete;
+    doubleDeleter& operator=(const doubleDeleter&) = delete;
+    doubleDeleter& operator=(doubleDeleter&& in) {extra = std::move(in.extra); printf("move assignment doubleDeleter %p=%p\n",this,&in); return *this;}
+    ~doubleDeleter() {printf("dtor doubleDeleter %p\n",this);}
   };
 
   using OutputType = std::unique_ptr<const DataType, doubleDeleter>;
@@ -213,7 +194,7 @@ template <typename ContainerT>
 typename std::enable_if<std::is_base_of<boost::container::pmr::polymorphic_allocator<byte>,
                                         typename ContainerT::allocator_type>::value == true,
                         FairMQMessagePtr>::type
-  getMessage(ContainerT& container)
+  getMessage(ContainerT&& container)
 {
   using namespace boost::container::pmr;
   auto alloc = container.get_allocator();
@@ -227,20 +208,34 @@ typename std::enable_if<std::is_base_of<boost::container::pmr::polymorphic_alloc
   }
   auto message = resource->getMessage(static_cast<void*>(container.data()));
   message->SetUsedSize(container.size() * sizeof(typename ContainerT::value_type));
-  container.clear();
   return std::move(message);
 };
 
 //__________________________________________________________________________________________________
-void print(FairMQMessagePtr& message, const char* prefix = "")
+template <typename ContainerT>
+bool AddData(O2Message& parts, Stack&& inputStack, ContainerT&& inputData)
+{
+  FairMQMessagePtr dataMessage = getMessage(std::move(inputData));
+  FairMQMessagePtr headerMessage = getMessage(std::move(inputStack));
+
+  parts.AddPart(std::move(headerMessage));
+  parts.AddPart(std::move(dataMessage));
+
+  return true;
+}
+
+//__________________________________________________________________________________________________
+void print(FairMQMessage* message, const char* prefix = "")
 {
   printf(prefix);
   if (!message) {
     printf("message is nullptr\n");
     return;
   }
-  printf("message at %p, data at: %p,  size: %li\n", message.get(), message->GetData(), message->GetSize());
+  printf("message at %p, data at: %p,  size: %li\n", message, message->GetData(), message->GetSize());
+  hexDump(prefix,message->GetData(), message->GetSize());
 }
 
 //__________________________________________________________________________________________________
-auto copyVector(auto in) { return in; }
+template<typename T>
+T copyVector(T&& in) { return std::forward<T>(in); }
