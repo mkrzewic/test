@@ -219,11 +219,11 @@ struct DataHeader : public BaseHeader {
     printf("default ctor DataHeader: %i @%p\n", flagsNextHeader, this);
   }
   //~DataHeader() { printf("dtor DataHeader %i @%p\n", flagsNextHeader, this); }
-  DataHeader(const DataHeader& in) noexcept
+  DataHeader(const DataHeader& in) noexcept: BaseHeader{ sizeof(DataHeader) }
   {
     printf("copy ctor DataHeader %i %p -> %p\n", flagsNextHeader, &in, this);
   }
-  DataHeader(const DataHeader&& in) noexcept
+  DataHeader(const DataHeader&& in) noexcept: BaseHeader{ sizeof(DataHeader) }
   {
     printf("move ctor DataHeader %i %p -> %p\n", flagsNextHeader, &in, this);
   }
@@ -315,7 +315,9 @@ private:
   {
     printf("  Stack: injecting header from %p-> %p\n", &h, here);
     std::copy(h.data(), h.data() + h.size(), here);
-    // new (here) T(h);
+    // somehow could not trigger copy elision, TODO
+    //using headerType = typename std::remove_reference<T>::type;
+    //headerType* placed = new (here) headerType(std::forward<T>(h));
     return here + h.size();
   }
 
@@ -330,7 +332,6 @@ private:
   // just to terminate the recursion
   static byte* inject(byte* here) noexcept
   {
-    printf("  Stack: injecting NOTHING %p\n", here);
     return here;
   }
 };
