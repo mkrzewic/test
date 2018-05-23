@@ -194,15 +194,18 @@ template <typename ContainerT>
 typename std::enable_if<std::is_base_of<boost::container::pmr::polymorphic_allocator<byte>,
                                         typename ContainerT::allocator_type>::value == true,
                         FairMQMessagePtr>::type
-  getMessage(ContainerT&& container)
+  getMessage(ContainerT&& container, boost::container::pmr::memory_resource* targetResource=nullptr)
 {
   using namespace boost::container::pmr;
   auto alloc = container.get_allocator();
   printf("getMessage:");
   printf(" alloc: %p", &alloc);
   printf(" alloc.resource: %p", alloc.resource());
+
   auto resource = dynamic_cast<O2MemoryResource*>(alloc.resource());
   printf(" resource: %p\n", resource);
+  //TODO: check if resource is same as target, if not, trugger copy to new message for target.
+  //      ALWAYS return a valid message unless something crazy happens
   if (!resource) {
     return nullptr;
   }
