@@ -169,13 +169,24 @@ auto adoptVector(size_t nelem, FairMQMessage* message)
     // kids: don't do this at home!
     std::unique_ptr<SpectatorMessageResource> extra;
     void operator()(const DataType* ptr) { delete ptr; }
-    doubleDeleter(std::unique_ptr<SpectatorMessageResource> in) : extra{std::move(in)} {printf("ctor doubleDeleter(resource) %p\n",this);}
-    doubleDeleter() : extra{nullptr} {printf("ctor doubleDeleter %p\n",this);}
-    doubleDeleter(doubleDeleter&& in) : extra{std::move(in.extra)} {printf("move ctor doubleDeleter %p->%p\n",&in,this);}
+    doubleDeleter(std::unique_ptr<SpectatorMessageResource> in) : extra{ std::move(in) }
+    {
+      printf("ctor doubleDeleter(resource) %p\n", this);
+    }
+    doubleDeleter() : extra{ nullptr } { printf("ctor doubleDeleter %p\n", this); }
+    doubleDeleter(doubleDeleter&& in) : extra{ std::move(in.extra) }
+    {
+      printf("move ctor doubleDeleter %p->%p\n", &in, this);
+    }
     doubleDeleter(const doubleDeleter& in) = delete;
     doubleDeleter& operator=(const doubleDeleter&) = delete;
-    doubleDeleter& operator=(doubleDeleter&& in) {extra = std::move(in.extra); printf("move assignment doubleDeleter %p=%p\n",this,&in); return *this;}
-    ~doubleDeleter() {printf("dtor doubleDeleter %p\n",this);}
+    doubleDeleter& operator=(doubleDeleter&& in)
+    {
+      extra = std::move(in.extra);
+      printf("move assignment doubleDeleter %p=%p\n", this, &in);
+      return *this;
+    }
+    ~doubleDeleter() { printf("dtor doubleDeleter %p\n", this); }
   };
 
   using OutputType = std::unique_ptr<const DataType, doubleDeleter>;
@@ -194,7 +205,7 @@ template <typename ContainerT>
 typename std::enable_if<std::is_base_of<boost::container::pmr::polymorphic_allocator<byte>,
                                         typename ContainerT::allocator_type>::value == true,
                         FairMQMessagePtr>::type
-  getMessage(ContainerT&& container, boost::container::pmr::memory_resource* targetResource=nullptr)
+  getMessage(ContainerT&& container, boost::container::pmr::memory_resource* targetResource = nullptr)
 {
   using namespace boost::container::pmr;
   auto alloc = container.get_allocator();
@@ -204,7 +215,7 @@ typename std::enable_if<std::is_base_of<boost::container::pmr::polymorphic_alloc
 
   auto resource = dynamic_cast<O2MemoryResource*>(alloc.resource());
   printf(" resource: %p\n", resource);
-  //TODO: check if resource is same as target, if not, trugger copy to new message for target.
+  // TODO: check if resource is same as target, if not, trugger copy to new message for target.
   //      ALWAYS return a valid message unless something crazy happens
   if (!resource) {
     return nullptr;
@@ -218,11 +229,12 @@ typename std::enable_if<std::is_base_of<boost::container::pmr::polymorphic_alloc
 template <typename ContainerT>
 bool AddData(O2Message& parts, Stack&& inputStack, ContainerT&& inputData)
 {
-  FairMQMessagePtr dataMessage = getMessage(std::move(inputData));
-  FairMQMessagePtr headerMessage = getMessage(std::move(inputStack));
+  using std::move;
+  auto dataMessage = getMessage(move(inputData));
+  auto headerMessage = getMessage(move(inputStack));
 
-  parts.AddPart(std::move(headerMessage));
-  parts.AddPart(std::move(dataMessage));
+  parts.AddPart(move(headerMessage));
+  parts.AddPart(move(dataMessage));
 
   return true;
 }
@@ -236,9 +248,12 @@ void print(FairMQMessage* message, const char* prefix = "")
     return;
   }
   printf("message at %p, data at: %p,  size: %li\n", message, message->GetData(), message->GetSize());
-  hexDump(prefix,message->GetData(), message->GetSize());
+  hexDump(prefix, message->GetData(), message->GetSize());
 }
 
 //__________________________________________________________________________________________________
-template<typename T>
-T copyVector(T&& in) { return std::forward<T>(in); }
+template <typename T>
+T copyVector(T&& in)
+{
+  return std::forward<T>(in);
+}

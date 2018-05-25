@@ -174,11 +174,6 @@ struct BaseHeader {
 
   constexpr uint32_t size() const noexcept { return headerSize; }
   const byte* data() const noexcept { return reinterpret_cast<const byte*>(this); }
-  const BaseHeader* next() const noexcept
-  {
-    return (flagsNextHeader) ? reinterpret_cast<const BaseHeader*>(reinterpret_cast<const byte*>(this) + headerSize)
-                             : nullptr;
-  }
   constexpr BaseHeader() noexcept : flagsNextHeader{ 0 }
   {
     printf("default ctor BaseHeader: %i @%p, size: %u\n", flagsNextHeader, this, headerSize);
@@ -208,6 +203,29 @@ struct BaseHeader {
     printf("move assign BaseHeader %i %p = %p\n", flagsNextHeader, this, &in);
     return *this;
   }
+
+  inline static const BaseHeader* get(const byte* b, size_t /*len*/ = 0)
+  {
+    return (const BaseHeader*)b;
+  }
+
+  inline static BaseHeader* get(byte* b, size_t /*len*/ = 0)
+  {
+    return (BaseHeader*)b;
+  }
+
+  /// get the next header if any (const version)
+  inline const BaseHeader* next() const noexcept
+  {
+    return (flagsNextHeader) ? reinterpret_cast<const BaseHeader*>(reinterpret_cast<const byte*>(this) + headerSize)
+                             : nullptr;
+  }
+
+  /// get the next header if any (non-const version)
+  inline BaseHeader* next() noexcept
+  {
+    return (flagsNextHeader) ? reinterpret_cast<BaseHeader*>(reinterpret_cast<byte*>(this) + headerSize) : nullptr;
+  }
 };
 
 using O2Message = FairMQParts;
@@ -219,11 +237,11 @@ struct DataHeader : public BaseHeader {
     printf("default ctor DataHeader: %i @%p\n", flagsNextHeader, this);
   }
   //~DataHeader() { printf("dtor DataHeader %i @%p\n", flagsNextHeader, this); }
-  DataHeader(const DataHeader& in) noexcept: BaseHeader{ sizeof(DataHeader) }
+  DataHeader(const DataHeader& in) noexcept : BaseHeader{ sizeof(DataHeader) }
   {
     printf("copy ctor DataHeader %i %p -> %p\n", flagsNextHeader, &in, this);
   }
-  DataHeader(const DataHeader&& in) noexcept: BaseHeader{ sizeof(DataHeader) }
+  DataHeader(const DataHeader&& in) noexcept : BaseHeader{ sizeof(DataHeader) }
   {
     printf("move ctor DataHeader %i %p -> %p\n", flagsNextHeader, &in, this);
   }
@@ -271,25 +289,33 @@ struct Stack {
   void clear() { buffer.release(); }
   allocator_type get_allocator() const { return allocator; }
 
-  /// The magic constructor: takes arbitrary number of arguments and serialized them
-  /// into the buffer.
+  /// The magic constructors: take arbitrary number of headers and serializes them
+  /// into the buffer buffer allocated by the specified polymorphic allocator. By default
+  /// allocation is done using new_delete_resource.
   /// Intended use: produce a temporary via an initializer list.
   /// TODO: maybe add a static_assert requiring first arg to be DataHeader
   /// or maybe even require all these to be derived form BaseHeader
-  template <typename... Headers>
-  Stack(const BaseHeader& firstHeader, Headers&&... headers)
-    : Stack(boost::container::pmr::new_delete_resource(), std::forward<Headers>(headers)...)
+  template <typename FirstArgType, typename... Headers,
+            typename std::enable_if_t<
+              !std::is_convertible<FirstArgType, boost::container::pmr::polymorphic_allocator<byte>>::value, int> = 0>
+  Stack(FirstArgType&& firstHeader, Headers&&... headers)
+    : Stack(boost::container::pmr::new_delete_resource(), std::forward<FirstArgType>(firstHeader),
+            std::forward<Headers>(headers)...)
   {
   }
 
-  template <typename... Headers>
-  Stack(const allocator_type allocator_, const DataHeader& firstHeader, Headers&&... headers)
-    : allocator{ allocator_ },
+  template <typename FirstArgType, typename... Headers>
+  Stack(const allocator_type allocatorArg, FirstArgType&& firstHeader, Headers&&... headers)
+    : allocator{ allocatorArg },
       bufferSize{ size(firstHeader) + size(std::forward<Headers>(headers)...) },
       buffer{ static_cast<byte*>(allocator.resource()->allocate(bufferSize, alignof(std::max_align_t))),
               freeobj{ allocator.resource() } }
   {
-    printf("Stack ctor, size %li\n", bufferSize);
+    printf("ctor Stack\n");
+    using FirstHeaderType = typename std::remove_cv<typename std::remove_reference<FirstArgType>::type>::type;
+    static_assert(
+      std::is_same<FirstHeaderType, DataHeader>::value || std::is_same<FirstHeaderType, Stack>::value,
+      "header stack construction MUST start either with DataHeader or another Stack");
     inject(inject(buffer.get(), firstHeader), std::forward<Headers>(headers)...);
   }
 
@@ -314,10 +340,13 @@ private:
   static byte* inject(byte* here, T&& h) noexcept
   {
     printf("  Stack: injecting header from %p-> %p\n", &h, here);
+    using headerType = typename std::remove_reference<T>::type;
+    static_assert(
+      std::is_base_of<BaseHeader, headerType>::value == true || std::is_same<Stack, headerType>::value == true,
+      "header stack parameters are restricted to stacks and headers derived from BaseHeader");
     std::copy(h.data(), h.data() + h.size(), here);
-    // somehow could not trigger copy elision, TODO
-    //using headerType = typename std::remove_reference<T>::type;
-    //headerType* placed = new (here) headerType(std::forward<T>(h));
+    // somehow could not trigger copy elision for placed construction, TODO: check out if this is possible here
+    // headerType* placed = new (here) headerType(std::forward<T>(h));
     return here + h.size();
   }
 
@@ -325,15 +354,17 @@ private:
   static byte* inject(byte* here, T&& h, Args&&... args) noexcept
   {
     auto alsohere = inject(here, h);
-    (reinterpret_cast<BaseHeader*>(here))->flagsNextHeader = true;
+    // the type might be a stack itself, loop through headers and set the flag in the last one
+    BaseHeader* next = BaseHeader::get(here);
+    while (next->flagsNextHeader) {
+      next = next->next();
+    }
+    next->flagsNextHeader = true;
     return inject(alsohere, std::forward<Args>(args)...);
   }
 
   // just to terminate the recursion
-  static byte* inject(byte* here) noexcept
-  {
-    return here;
-  }
+  static byte* inject(byte* here) noexcept { return here; }
 };
 
 void hexDump(const char* desc, const void* voidaddr, size_t len, size_t max = 512)

@@ -89,10 +89,15 @@ int main()
 
   printf("\nstack ctor\n");
   auto ui = std::make_unique<int>(3);
-  Stack stack{ FastSpectatorAllocator{ &channelResource }, DataHeader{}, BaseHeader{}, DataHeader{} };
+  DataHeader dh{};
+  DataHeader* dhp = &dh;
+  Stack stack1{ FastSpectatorAllocator{ &channelResource }, (const DataHeader&)*dhp, BaseHeader{}, DataHeader{} };
+
+  Stack stack2{ stack1, DataHeader{}, *dhp };
+  hexDump("stack2",stack2.data(), stack2.size());
 
   O2Message o2mes;
-  AddData(o2mes, std::move(stack), std::move(vector));
+  AddData(o2mes, std::move(stack1), std::move(vector));
 
   print(&o2mes[0]);
   print(&o2mes[1]);

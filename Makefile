@@ -1,5 +1,5 @@
 CXX=g++ 
-CXXFLAGS:=-g -Wall -I. -std=c++17 -ggdb -O2 -fno-omit-frame-pointer
+CXXFLAGS:=-g -Wall -I. -std=c++14 -ggdb -O2 -fno-omit-frame-pointer
 ROOTLIBS = -L$(ROOTSYS)/lib -L/home/mkrzewic/o2/sw/slc7_x86-64/boost/latest/lib -lCore -lHist -lGraf -lGraf3d -lGpad -lTree -lRint -lPostscript -lMatrix -lPhysics -lGui -lm -ldl -rdynamic -lThread -lMathCore -lGeom -lGraf -lMathCore -lNet -lTree -lEG -lGpad -lMatrix -lMinuit -lPhysics -lVMC -lThread -lXMLParser -lGraf3d -lRIO -lHist -lCore -lzmq -lbenchmark -lboost_container
 ROOTINC = -I$(ROOTSYS)/include -I/home/mkrzewic/o2/sw/slc7_x86-64/boost/latest/include/ -I/usr/local/include/benchmark -I/usr/local/include
 CXXFLAGS+=$(ROOTINC)
