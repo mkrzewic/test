@@ -6,7 +6,7 @@ int main()
   ChannelResource channelResource(&factory);
   using o2vector = std::vector<elem, SpectatorAllocator<byte>>;
 
-  printf("\nmake vector with ByteSpectatorAllocator\n");
+  printf("\nmake vector with SpectatorAllocator\n");
   o2vector vector(SpectatorAllocator<elem>{ &channelResource });
   vector.reserve(3);
   vector.emplace_back(1);
@@ -27,16 +27,20 @@ int main()
 
   {
     printf("\nadoptVector() by value with a SpectatorMessageResource\n");
-    auto vvv = adoptVector<elem>(3, messageResource);
-    printf("vvv: %i %i %i\n", vvv[0].content, vvv[1].content, vvv[2].content);
+    auto v = adoptVector<elem>(3, &messageResource);
+    printf("v: %i %i %i\n", v[0].content, v[1].content, v[2].content);
   }
 
   {
     printf("\nadoptVector() by value with an OwningMessageSpectatorAllocator\n");
-    auto vvv = adoptVector<elem>(3, &channelResource, std::move(message));
+    auto vv = adoptVector<elem>(3, &channelResource, std::move(message));
+    printf("vv: %i %i %i\n", vv[0].content, vv[1].content, vv[2].content);
+    auto vvv = std::move(vv);
     printf("vvv: %i %i %i\n", vvv[0].content, vvv[1].content, vvv[2].content);
-    auto mes = getMessage(std::move(vvv));
+    auto mes = getMessage(std::move(vv));
     print(mes.get());
+    auto mess = getMessage(std::move(vvv));
+    print(mess.get());
   }
 
   printf("\nreturn\n");

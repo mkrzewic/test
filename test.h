@@ -284,7 +284,7 @@ FairMQMessagePtr getMessage(ContainerT&& container_, FairMQMemoryResource* targe
   if ((!targetResource && resource) || (resource && targetResource && resource->is_equal(*targetResource))) {
     auto message = resource->getMessage(static_cast<void*>(
       const_cast<typename std::remove_const<typename ContainerT::value_type>::type*>(container.data())));
-    message->SetUsedSize(containerSizeBytes);
+    if (message) message->SetUsedSize(containerSizeBytes);
     return std::move(message);
   }
   else {
@@ -296,9 +296,9 @@ FairMQMessagePtr getMessage(ContainerT&& container_, FairMQMemoryResource* targe
 
 //__________________________________________________________________________________________________
 template <typename ElemT>
-auto adoptVector(size_t nelem, MessageResource& resource)
+auto adoptVector(size_t nelem, FairMQMemoryResource* resource)
 {
-  return std::vector<const ElemT, SpectatorAllocator<ElemT>>(nelem, SpectatorAllocator<ElemT>(&resource));
+  return std::vector<const ElemT, SpectatorAllocator<ElemT>>(nelem, SpectatorAllocator<ElemT>(resource));
 };
 
 //__________________________________________________________________________________________________
@@ -380,9 +380,3 @@ T copyVector(T&& in)
   return std::forward<T>(in);
 }
 
-//__________________________________________________________________________________________________
-template <typename ElemT>
-auto adoptVector(size_t nelem, SpectatorMessageResource& resource)
-{
-  return std::vector<const ElemT, SpectatorAllocator<ElemT>>(nelem, SpectatorAllocator<ElemT>{ &resource });
-};
