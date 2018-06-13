@@ -20,26 +20,23 @@ int main()
 
   printf("\nadopt\n");
   auto message = std::make_unique<FairMQMessage>(3 * sizeof(elem));
-  SpectatorMessageResource messageResource{message.get()};
+  SpectatorMessageResource messageResource{ message.get() };
   printf("address of resource3: %p\n", &messageResource);
   elem tmpBuf[3] = { 3, 2, 1 };
   std::memcpy(message->GetData(), tmpBuf, 3 * sizeof(elem));
 
   {
-  printf("\nadoptVector() by value with a SpectatorMessageResource\n");
-  auto vvv = adoptVector<elem>(3, messageResource);
-  printf("vvv: %i %i %i\n", vvv[0].content, vvv[1].content, vvv[2].content);
+    printf("\nadoptVector() by value with a SpectatorMessageResource\n");
+    auto vvv = adoptVector<elem>(3, messageResource);
+    printf("vvv: %i %i %i\n", vvv[0].content, vvv[1].content, vvv[2].content);
   }
 
   {
-  printf("\nadoptVector() by value with an OwningMessageSpectatorAllocator\n");
-  auto vvv = adoptVector<elem>(3, std::move(message));
-  printf("vvv: %i %i %i\n", vvv[0].content, vvv[1].content, vvv[2].content);
-  auto vvvv = std::move(vvv);
-  printf("vvv: size %li\n",vvv.size());
-  printf("vvvv: %i %i %i\n", vvvv[0].content, vvvv[1].content, vvvv[2].content);
-  auto mes = getMessage(std::move(vvvv));
-  print(mes.get());
+    printf("\nadoptVector() by value with an OwningMessageSpectatorAllocator\n");
+    auto vvv = adoptVector<elem>(3, &channelResource, std::move(message));
+    printf("vvv: %i %i %i\n", vvv[0].content, vvv[1].content, vvv[2].content);
+    //auto mes = getMessage(std::move(vvv));
+    //print(mes.get());
   }
 
   printf("\nreturn\n");

@@ -19,6 +19,7 @@ public:
   /// e.g. pointer returned by std::vector::data()
   /// return nullptr if returning a message does not make sense!
   virtual FairMQMessagePtr getMessage(void* p) = 0;
+  virtual void* setMessage(FairMQMessagePtr) = 0;
   virtual const FairMQTransportFactory* getTransportFactory() const noexcept = 0;
   virtual size_t getNumberOfMessages() const noexcept = 0;
 };
@@ -43,6 +44,12 @@ public:
     }
   };
   FairMQMessagePtr getMessage(void* p) override { return std::move(messageMap[p]); };
+  void* setMessage(FairMQMessagePtr message) override
+  {
+    void* addr = message->GetData();
+    messageMap[addr] = std::move(message);
+    return addr;
+  }
   const FairMQTransportFactory* getTransportFactory() const noexcept override { return factory; }
 
   size_t getNumberOfMessages() const noexcept override { return messageMap.size(); }
@@ -61,7 +68,7 @@ protected:
   {
     if (1 > messageMap.erase(p)) {
       // so destructors should not throw, but deallocate maybe should?
-      throw std::runtime_error("bad dealloc: not my resource");
+      throw std::runtime_error("ChannelResource::deallocate(): not my resource");
     }
     return;
   };
@@ -84,6 +91,7 @@ public:
   FairMQMessagePtr getMessage(void* p) override { return nullptr; }
   const FairMQTransportFactory* getTransportFactory() const noexcept override { return nullptr; }
   size_t getNumberOfMessages() const noexcept override { return 0; }
+  void* setMessage(FairMQMessagePtr) override { return nullptr; }
 
 protected:
   const FairMQMessage* message;
@@ -126,47 +134,44 @@ class MessageResource : public FairMQMemoryResource {
 
 public:
   MessageResource() noexcept = delete;
-  MessageResource(FairMQMessagePtr _message) : message(std::shared_ptr<FairMQMessage>(std::move(_message))){};
-  FairMQMessagePtr getMessage(void* p) override
+  MessageResource(const MessageResource&) noexcept = default;
+  MessageResource(MessageResource&&) noexcept = default;
+  MessageResource& operator=(const MessageResource&) = default;
+  MessageResource& operator=(MessageResource&&) = default;
+  MessageResource(FairMQMessagePtr message, FairMQMemoryResource* upstream)
+    : mUpstream{ upstream },
+      mMessageSize{ message->GetSize() },
+      mMessageData{ mUpstream ? mUpstream->setMessage(std::move(message))
+                              : throw std::runtime_error("MessageResource::MessageResource upstream is nullptr") }
   {
-    if (message.use_count() == 1) {
-      FairMQMessage* msgptr{ message.get() };
-      message.reset();
-      return std::unique_ptr<FairMQMessage>(msgptr);
-    }
-    else {
-      throw std::runtime_error(std::string("MessageResource::getMessage() message.use_count() ") +
-                               std::to_string(message.use_count()));
-    }
   }
+  FairMQMessagePtr getMessage(void* p) override { return mUpstream->getMessage(p); }
+  void* setMessage(FairMQMessagePtr message) override { return mUpstream->setMessage(std::move(message)); }
   const FairMQTransportFactory* getTransportFactory() const noexcept override { return nullptr; }
-  size_t getNumberOfMessages() const noexcept override { return message ? 1 : 0; }
+  size_t getNumberOfMessages() const noexcept override { return mMessageData ? 1 : 0; }
 
 protected:
-  std::shared_ptr<FairMQMessage> message{ nullptr };
+  FairMQMemoryResource* mUpstream{ nullptr };
+  size_t mMessageSize{ 0 };
+  void* mMessageData{ nullptr };
 
   virtual void* do_allocate(std::size_t bytes, std::size_t alignment) override
   {
-    if (message) {
-      if (bytes > message->GetSize()) {
-        throw std::bad_alloc();
-      }
-      return message->GetData();
+    if (bytes > mMessageSize) {
+      throw std::bad_alloc();
     }
-    else {
-      return nullptr;
-    }
-  };
+    return mMessageData;
+  }
   virtual void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override
   {
-    message = nullptr;
+    mMessageData = nullptr;
     return;
-  };
+  }
   virtual bool do_is_equal(const memory_resource& other) const noexcept override
   {
     // since this uniquely owns the message it can never be equal to anybody else
     return false;
-  };
+  }
 };
 
 //__________________________________________________________________________________________________
@@ -295,10 +300,10 @@ auto adoptVector(size_t nelem, MessageResource& resource)
 
 //__________________________________________________________________________________________________
 template <typename ElemT>
-auto adoptVector(size_t nelem, FairMQMessagePtr message)
+auto adoptVector(size_t nelem, FairMQMemoryResource* upstream, FairMQMessagePtr message)
 {
   return std::vector<const ElemT, OwningMessageSpectatorAllocator<ElemT>>(
-    nelem, OwningMessageSpectatorAllocator<ElemT>(MessageResource{ std::move(message) }));
+    nelem, OwningMessageSpectatorAllocator<ElemT>(MessageResource{ std::move(message), upstream }));
 };
 
 //__________________________________________________________________________________________________
