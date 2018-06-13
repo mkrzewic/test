@@ -125,6 +125,7 @@ protected:
 class MessageResource : public FairMQMemoryResource {
 
 public:
+  MessageResource() noexcept = delete;
   MessageResource(FairMQMessagePtr _message) : message(std::shared_ptr<FairMQMessage>(std::move(_message))){};
   FairMQMessagePtr getMessage(void* p) override
   {
@@ -134,7 +135,8 @@ public:
       return std::unique_ptr<FairMQMessage>(msgptr);
     }
     else {
-      throw std::bad_alloc();
+      throw std::runtime_error(std::string("MessageResource::getMessage() message.use_count() ") +
+                               std::to_string(message.use_count()));
     }
   }
   const FairMQTransportFactory* getTransportFactory() const noexcept override { return nullptr; }
@@ -191,7 +193,10 @@ public:
   }
 
   T* allocate(size_t size) { return reinterpret_cast<T*>(this->resource()->allocate(size * sizeof(T), 0)); }
-  void deallocate(T* ptr, size_t size) { this->resource()->deallocate(const_cast<typename std::remove_cv<T>::type*>(ptr), size); }
+  void deallocate(T* ptr, size_t size)
+  {
+    this->resource()->deallocate(const_cast<typename std::remove_cv<T>::type*>(ptr), size);
+  }
 };
 
 //__________________________________________________________________________________________________
@@ -205,11 +210,10 @@ public:
   OwningMessageSpectatorAllocator() noexcept = default;
   OwningMessageSpectatorAllocator(const OwningMessageSpectatorAllocator&) noexcept = default;
   OwningMessageSpectatorAllocator(OwningMessageSpectatorAllocator&&) noexcept = default;
-  OwningMessageSpectatorAllocator(const MessageResource& resource) noexcept : mResource{resource} {}
+  OwningMessageSpectatorAllocator(const MessageResource& resource) noexcept : mResource{ resource } {}
 
   template <class U>
-  OwningMessageSpectatorAllocator(const OwningMessageSpectatorAllocator<U>& other) noexcept
-    : mResource(other.mResource)
+  OwningMessageSpectatorAllocator(const OwningMessageSpectatorAllocator<U>& other) noexcept : mResource(other.mResource)
   {
   }
 
@@ -242,7 +246,10 @@ public:
   }
 
   T* allocate(size_t size) { return reinterpret_cast<T*>(mResource.allocate(size * sizeof(T), 0)); }
-  void deallocate(T* ptr, size_t size) { mResource.deallocate(const_cast<typename std::remove_cv<T>::type*>(ptr), size); }
+  void deallocate(T* ptr, size_t size)
+  {
+    mResource.deallocate(const_cast<typename std::remove_cv<T>::type*>(ptr), size);
+  }
 };
 
 using ByteSpectatorAllocator = SpectatorAllocator<byte>;
@@ -267,7 +274,8 @@ FairMQMessagePtr getMessage(ContainerT&& container_, FairMQMemoryResource* targe
   }
   size_t containerSizeBytes = container.size() * sizeof(typename ContainerT::value_type);
   if ((!targetResource && resource) || (resource && targetResource && resource->is_equal(*targetResource))) {
-    auto message = resource->getMessage(static_cast<void*>(container.data()));
+    auto message = resource->getMessage(static_cast<void*>(
+      const_cast<typename std::remove_const<typename ContainerT::value_type>::type*>(container.data())));
     message->SetUsedSize(containerSizeBytes);
     return std::move(message);
   }
@@ -282,7 +290,7 @@ FairMQMessagePtr getMessage(ContainerT&& container_, FairMQMemoryResource* targe
 template <typename ElemT>
 auto adoptVector(size_t nelem, MessageResource& resource)
 {
-  return std::vector<const ElemT, SpectatorAllocator<ElemT>>(nelem, SpectatorAllocator<ElemT>( &resource ));
+  return std::vector<const ElemT, SpectatorAllocator<ElemT>>(nelem, SpectatorAllocator<ElemT>(&resource));
 };
 
 //__________________________________________________________________________________________________
@@ -290,7 +298,7 @@ template <typename ElemT>
 auto adoptVector(size_t nelem, FairMQMessagePtr message)
 {
   return std::vector<const ElemT, OwningMessageSpectatorAllocator<ElemT>>(
-    nelem, OwningMessageSpectatorAllocator<ElemT>( MessageResource{std::move(message)} ));
+    nelem, OwningMessageSpectatorAllocator<ElemT>(MessageResource{ std::move(message) }));
 };
 
 //__________________________________________________________________________________________________
