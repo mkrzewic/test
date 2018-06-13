@@ -129,7 +129,8 @@ protected:
 };
 
 //__________________________________________________________________________________________________
-/// This memory resource only watches, does not allocate/deallocate anything, owns the message.
+/// This memory resource only watches, does not allocate/deallocate anything.
+/// Ownership is passed to the upstream resource.
 /// In combination with the SpectatorAllocator this is an alternative to using span, as raw memory
 /// (e.g. an existing buffer message) will be accessible with appropriate container.
 class MessageResource : public FairMQMemoryResource {
@@ -166,7 +167,7 @@ protected:
   }
   virtual void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override
   {
-    auto tmp = getMessage(mMessageData);
+    getMessage(mMessageData);//let the message die.
     return;
   }
   virtual bool do_is_equal(const memory_resource& other) const noexcept override

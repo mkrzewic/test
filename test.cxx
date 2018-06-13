@@ -35,8 +35,8 @@ int main()
     printf("\nadoptVector() by value with an OwningMessageSpectatorAllocator\n");
     auto vvv = adoptVector<elem>(3, &channelResource, std::move(message));
     printf("vvv: %i %i %i\n", vvv[0].content, vvv[1].content, vvv[2].content);
-    //auto mes = getMessage(std::move(vvv));
-    //print(mes.get());
+    auto mes = getMessage(std::move(vvv));
+    print(mes.get());
   }
 
   printf("\nreturn\n");
