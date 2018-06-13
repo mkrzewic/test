@@ -25,11 +25,9 @@ int main()
   elem tmpBuf[3] = { 3, 2, 1 };
   std::memcpy(message->GetData(), tmpBuf, 3 * sizeof(elem));
 
-  {
     printf("\nadoptVector() by value with a SpectatorMessageResource\n");
     auto v = adoptVector<elem>(3, &messageResource);
     printf("v: %i %i %i\n", v[0].content, v[1].content, v[2].content);
-  }
 
   {
     printf("\nadoptVector() by value with an OwningMessageSpectatorAllocator\n");

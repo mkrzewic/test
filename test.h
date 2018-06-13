@@ -218,7 +218,7 @@ public:
   OwningMessageSpectatorAllocator() noexcept = default;
   OwningMessageSpectatorAllocator(const OwningMessageSpectatorAllocator&) noexcept = default;
   OwningMessageSpectatorAllocator(OwningMessageSpectatorAllocator&&) noexcept = default;
-  OwningMessageSpectatorAllocator(const MessageResource& resource) noexcept : mResource{ resource } {}
+  OwningMessageSpectatorAllocator(MessageResource&& resource) noexcept : mResource{ resource } {}
 
   template <class U>
   OwningMessageSpectatorAllocator(const OwningMessageSpectatorAllocator<U>& other) noexcept : mResource(other.mResource)
