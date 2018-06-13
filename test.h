@@ -43,7 +43,7 @@ public:
       throw std::runtime_error("Tried to construct from a nullptr FairMQTransportFactory");
     }
   };
-  FairMQMessagePtr getMessage(void* p) override { return std::move(messageMap[p]); };
+  FairMQMessagePtr getMessage(void* p) override { auto mes = std::move(messageMap[p]); messageMap.erase(p); return mes;}
   void* setMessage(FairMQMessagePtr message) override
   {
     void* addr = message->GetData();
@@ -66,10 +66,12 @@ protected:
 
   void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override
   {
-    if (1 > messageMap.erase(p)) {
-      // so destructors should not throw, but deallocate maybe should?
-      throw std::runtime_error("ChannelResource::deallocate(): not my resource");
-    }
+    messageMap.erase(p);
+    //if (1 > messageMap.erase(p)) {
+    //  // so destructors should not throw, but deallocate maybe should?
+    //  printf("ChannelResource::do_deallocate(%p)\n",p);
+    //  throw std::runtime_error(std::string("ChannelResource::deallocate(): not my resource"));
+    //}
     return;
   };
 
@@ -164,7 +166,7 @@ protected:
   }
   virtual void do_deallocate(void* p, std::size_t bytes, std::size_t alignment) override
   {
-    mMessageData = nullptr;
+    auto tmp = getMessage(mMessageData);
     return;
   }
   virtual bool do_is_equal(const memory_resource& other) const noexcept override
